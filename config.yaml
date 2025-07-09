@@ -1,0 +1,49 @@
+# Analytics Performance Tester Configuration
+# Single source of truth for all language implementations
+
+# Test execution settings
+test:
+  duration_ms: 30000          # 30 seconds per SDK
+  warmup_ms: 30000             # 30 seconds JIT warmup
+  threads: 100                 # Concurrent threads
+  request_interval_ms: 2500    # Time between requests per thread
+  
+# Multiple queries to test with
+queries:
+  - name: "simple_arithmetic"
+    statement: "SELECT 1+1 as result;"
+    description: "Basic arithmetic test"
+    
+  # - name: "date_functions" 
+  #   statement: "SELECT NOW() as current_time, DATE_ADD(NOW(), 1, 'day') as tomorrow;"
+  #   description: "Date function performance"
+    
+  # - name: "string_operations"
+  #   statement: "SELECT CONCAT('Hello', ' ', 'World') as greeting, LENGTH('Analytics') as len;"
+  #   description: "String manipulation test"
+    
+  # - name: "aggregation_test"
+  #   statement: "SELECT COUNT(*) as count, AVG(1) as average FROM [1,2,3,4,5] as nums;"
+  #   description: "Basic aggregation performance"
+
+# SDK-specific settings  
+sdk:
+  analytics_timeout_s: 15      # Query timeout
+  connection_timeout_s: 30     # Cluster connection timeout
+  
+# Cluster credentials (can be overridden by environment variables)
+cluster:
+  username: "Administrator"
+  password: "password"
+  
+# Output settings
+output:
+  results_dir: "results"
+  logs_dir: "results/logs"
+  raw_data_dir: "results/raw"
+  reports_dir: "results/reports"
+  
+# Progress reporting
+monitoring:
+  progress_report_interval_ms: 5000
+  metrics_batch_size: 1000

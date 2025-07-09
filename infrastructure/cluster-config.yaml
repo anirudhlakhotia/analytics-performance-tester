@@ -3,4 +3,4 @@ nodes:
   - count: 1
     version: 2.0.0-1024
 docker:
-  load-balancer: true
+  load-balancer: false

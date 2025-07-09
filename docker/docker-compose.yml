@@ -1,0 +1,23 @@
+services:
+  analytics-tester:
+    build:
+      context: ../..
+      dockerfile: analytics-performance-tester/docker/Dockerfile
+    environment:
+      - CLUSTER_CONNECTION_STRING=${CLUSTER_CONNECTION_STRING}
+      - CLUSTER_ID=${CLUSTER_ID}
+      - BENCHMARK_RUN_TIMESTAMP=${BENCHMARK_RUN_TIMESTAMP}
+      - BENCHMARK_RUN_DIR=${BENCHMARK_RUN_DIR}
+      - BENCHMARK_RAW_DIR=${BENCHMARK_RAW_DIR}
+      - BENCHMARK_REPORTS_DIR=${BENCHMARK_REPORTS_DIR}
+      - BENCHMARK_LOGS_DIR=${BENCHMARK_LOGS_DIR}
+    volumes:
+      - ../results:/workspace/results
+    networks:
+      - dinonet_bridge
+    stdin_open: true
+    tty: true
+networks:
+  dinonet_bridge:
+    name: dinonet
+    external: true

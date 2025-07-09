@@ -1,4 +1,4 @@
-package com.couchbase.perf;
+package com.couchbase.analytics.benchmark;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.slf4j.Logger;
@@ -14,9 +14,14 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicLong;
 import java.text.DecimalFormat;
 
-public class ResultWriter implements Runnable {
-    private static final Logger LOGGER = LoggerFactory.getLogger(ResultWriter.class);
+public class MetricsJsonWriter implements Runnable {
+    private static final Logger LOGGER = LoggerFactory.getLogger(MetricsJsonWriter.class);
     private static final DecimalFormat DECIMAL_FORMAT = new DecimalFormat("#.##");
+    
+    // Constants
+    private static final long RESULT_QUEUE_POLL_TIMEOUT_MS = 100;
+    private static final long RESULT_WRITER_LOG_INTERVAL_MS = 5000;
+    private static final int RESULT_WRITER_LOG_BATCH_SIZE = 1000;
     
     private final BlockingQueue<Object> resultQueue = new LinkedBlockingQueue<>();
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -24,17 +29,16 @@ public class ResultWriter implements Runnable {
     private final AtomicLong writtenCount = new AtomicLong(0);
     private final String outputFile;
     
-    public ResultWriter(String outputFile) {
+    public MetricsJsonWriter(String outputFile) {
         this.outputFile = outputFile;
-        LOGGER.info("Created ResultWriter for file: {}", outputFile);
+        LOGGER.info("Created MetricsJsonWriter for file: {}", outputFile);
     }
     
-    public void writeResult(PerformanceMetrics metrics) {
+    public void writeResult(QueryExecutionMetrics metrics) {
         if (!resultQueue.offer(metrics)) {
             LOGGER.warn("Failed to queue result, queue may be full (size: {})", resultQueue.size());
         }
     }
-    
     
     @Override
     public void run() {
@@ -42,7 +46,7 @@ public class ResultWriter implements Runnable {
         File outputFileObj = new File(outputFile);
         outputFileObj.getParentFile().mkdirs();
         
-        LOGGER.info("ResultWriter starting for file: {}", outputFile);
+        LOGGER.info("MetricsJsonWriter starting for file: {}", outputFile);
         LOGGER.info("Output directory: {}", outputFileObj.getParent());
         
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(outputFile))) {
@@ -53,7 +57,7 @@ public class ResultWriter implements Runnable {
             
             while (running.get() || !resultQueue.isEmpty()) {
                 try {
-                    Object result = resultQueue.poll(Config.RESULT_QUEUE_POLL_TIMEOUT_MS, 
+                    Object result = resultQueue.poll(RESULT_QUEUE_POLL_TIMEOUT_MS, 
                                                     java.util.concurrent.TimeUnit.MILLISECONDS);
                     if (result != null) {
                         String jsonLine = objectMapper.writeValueAsString(result);
@@ -66,10 +70,10 @@ public class ResultWriter implements Runnable {
                         
                         // Log progress using config constants
                         long currentTime = System.currentTimeMillis();
-                        if (currentTime - lastLogTime >= Config.RESULT_WRITER_LOG_INTERVAL_MS || 
-                            count % Config.RESULT_WRITER_LOG_BATCH_SIZE == 0) {
-                            double rate = processedInInterval / Config.millisecondsToSeconds(currentTime - lastLogTime);
-                            LOGGER.info("ResultWriter: {} total results written, {} queued, {} results/sec", 
+                        if (currentTime - lastLogTime >= RESULT_WRITER_LOG_INTERVAL_MS || 
+                            count % RESULT_WRITER_LOG_BATCH_SIZE == 0) {
+                            double rate = processedInInterval / ((currentTime - lastLogTime) / 1000.0);
+                            LOGGER.info("MetricsJsonWriter: {} total results written, {} queued, {} results/sec", 
                                 count, resultQueue.size(), DECIMAL_FORMAT.format(rate));
                             lastLogTime = currentTime;
                             processedInInterval = 0;
@@ -83,12 +87,12 @@ public class ResultWriter implements Runnable {
                     } else if (running.get()) {
                         // Periodic status when no results are being written
                         if (writtenCount.get() > 0) {
-                            LOGGER.debug("ResultWriter waiting for results... (queue size: {})", 
+                            LOGGER.debug("MetricsJsonWriter waiting for results... (queue size: {})", 
                                 resultQueue.size());
                         }
                     }
                 } catch (InterruptedException e) {
-                    LOGGER.info("ResultWriter interrupted");
+                    LOGGER.info("MetricsJsonWriter interrupted");
                     Thread.currentThread().interrupt();
                     break;
                 } catch (IOException e) {
@@ -111,7 +115,7 @@ public class ResultWriter implements Runnable {
                 }
             }
             
-            LOGGER.info("ResultWriter completed. Total results written: {}", writtenCount.get());
+            LOGGER.info("MetricsJsonWriter completed. Total results written: {}", writtenCount.get());
             
         } catch (IOException e) {
             LOGGER.error("Failed to open output file: {}", outputFile, e);
@@ -119,7 +123,7 @@ public class ResultWriter implements Runnable {
     }
     
     public void stop() {
-        LOGGER.info("Stopping ResultWriter... (queue size: {})", resultQueue.size());
+        LOGGER.info("Stopping MetricsJsonWriter... (queue size: {})", resultQueue.size());
         running.set(false);
     }
     
