@@ -15,7 +15,7 @@ public class OperationalSDKHandler implements AnalyticsSDKHandler {
     
     @Override
     public QueryExecutionMetrics executeQuery(String query, String queryName, int sequenceNumber) {
-        long absoluteStartTimeMs = System.currentTimeMillis();  // Capture absolute time first
+        long absoluteStartTimeMs = System.currentTimeMillis();
         long startTime = System.nanoTime();
         
         boolean success = false;
@@ -23,34 +23,26 @@ public class OperationalSDKHandler implements AnalyticsSDKHandler {
         int rowCount = 0;
 
         try {
-            LOGGER.debug("Executing operational analytics query #{}: {}", sequenceNumber, query);
+            if (sequenceNumber <= 10 || sequenceNumber % 1000 == 0) {
+                 LOGGER.info("Executing operational analytics query #{}", sequenceNumber);
+            }
             
             AnalyticsResult result = operationalCluster.analyticsQuery(query);
+            // This consumes the rows, it's part of the work being measured.
             rowCount = result.rowsAsObject().size();
             success = true;
-            
-            long endTime = System.nanoTime();
-            
-            LOGGER.debug("Operational analytics query #{} completed in {} ns with {} rows", 
-                        sequenceNumber, (endTime - startTime), rowCount);
-            
-            return new QueryExecutionMetrics(
-                startTime, endTime, success, errorMessage, rowCount, 
-                "operational", queryName, sequenceNumber, absoluteStartTimeMs
-            );
-            
         } catch (Exception e) {
             errorMessage = e.getMessage();
-            long endTime = System.nanoTime();
-            
-            LOGGER.error("Operational analytics query #{} failed after {} ns: {}", 
-                        sequenceNumber, (endTime - startTime), errorMessage);
-            
-            return new QueryExecutionMetrics(
-                startTime, endTime, false, errorMessage, 0, 
-                "operational", queryName, sequenceNumber, absoluteStartTimeMs
-            );
+            success = false;
         }
+
+        // ✅ FIXED: Capture endTime AFTER the operation completes for consistency.
+        long endTime = System.nanoTime();
+        
+        return new QueryExecutionMetrics(
+            startTime, endTime, success, errorMessage, rowCount, 
+            "operational", queryName, sequenceNumber, absoluteStartTimeMs
+        );
     }
     
     @Override
@@ -60,6 +52,6 @@ public class OperationalSDKHandler implements AnalyticsSDKHandler {
     
     @Override
     public void close() {
-        // No-op, cluster lifecycle managed by the caller
+        // Cluster lifecycle is managed by the main runner, so this is a no-op.
     }
 } 

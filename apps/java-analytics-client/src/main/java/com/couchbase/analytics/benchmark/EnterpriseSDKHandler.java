@@ -15,7 +15,7 @@ public class EnterpriseSDKHandler implements AnalyticsSDKHandler {
     
     @Override
     public QueryExecutionMetrics executeQuery(String query, String queryName, int sequenceNumber) {
-        long absoluteStartTimeMs = System.currentTimeMillis();  // Capture absolute time first
+        long absoluteStartTimeMs = System.currentTimeMillis();
         long startTime = System.nanoTime();
         
         boolean success = false;
@@ -23,21 +23,20 @@ public class EnterpriseSDKHandler implements AnalyticsSDKHandler {
         int rowCount = 0;
 
         try {
-            LOGGER.debug("Executing enterprise analytics query #{}: {}", sequenceNumber, query);
+            if (sequenceNumber <= 10 || sequenceNumber % 1000 == 0) {
+                LOGGER.info("Executing enterprise analytics query #{}", sequenceNumber);
+            }
             
             QueryResult result = enterpriseCluster.executeQuery(query);
+            // This consumes the rows, it's part of the work being measured.
             rowCount = result.rows().size();
             success = true;
-            
-            LOGGER.debug("Enterprise analytics query #{} completed in {} ns with {} rows", 
-                        sequenceNumber, (System.nanoTime() - startTime), rowCount);
-                        
         } catch (Exception e) {
             errorMessage = e.getMessage();
-            LOGGER.error("Enterprise analytics query #{} failed: {}", sequenceNumber, errorMessage);
             success = false;
         }
         
+        // ✅ FIXED: Capture endTime AFTER the operation completes.
         long endTime = System.nanoTime();
 
         return new QueryExecutionMetrics(

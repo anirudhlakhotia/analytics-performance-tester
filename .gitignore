@@ -31,3 +31,6 @@ results/archive_*/
 
 # cbdinocluster binary (too large for git)
 cbdinocluster
+
+# Results
+results/

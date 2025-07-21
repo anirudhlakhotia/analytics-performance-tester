@@ -141,8 +141,8 @@ setup_cluster() {
 # Run a single SDK test with live output
 run_sdk_test() {
     local sdk_type="$1"
-    local output_file="$RUN_DIR/raw/${sdk_type}.jsonl"
-    local log_file="$RUN_DIR/logs/${sdk_type}.log"
+    local output_file="$RUN_DIR/raw/${sdk_type}-java.jsonl"  # ← Add "-java" suffix
+    local log_file="$RUN_DIR/logs/${sdk_type}-java.log"     # ← Add "-java" suffix
     
     log_step "Running $sdk_type SDK test..."
     
@@ -232,7 +232,7 @@ main() {
     
     # Generate dashboard
     log_step "Generating analysis dashboard..."
-    python3 "$PROJECT_ROOT/analysis/dashboard-generator.py" --run-dir "$RUN_DIR"
+    python3 "$PROJECT_ROOT/analysis/dashboard_generator.py" --run-dir "$RUN_DIR"
     
     # Create latest symlink
     if [ -L "$RESULTS_DIR/latest" ]; then

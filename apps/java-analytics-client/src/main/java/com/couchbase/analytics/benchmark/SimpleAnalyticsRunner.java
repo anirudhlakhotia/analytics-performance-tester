@@ -49,6 +49,9 @@ public class SimpleAnalyticsRunner {
     private final String runTimestamp;
     private final String sdkType;
     
+    // ✅ FIXED: Add a field for the writer to manage its lifecycle
+    private MetricsJsonWriter resultWriter;
+
     public SimpleAnalyticsRunner() {
         // All configuration comes from environment variables set by the shell script
         this.durationMs = getLongEnv("BENCHMARK_DURATION_MS");
@@ -97,8 +100,11 @@ public class SimpleAnalyticsRunner {
     }
     
     public void run() throws Exception {
-        // 1. Create SDK handler
+        // 1. Create SDK handler and writer
         AnalyticsSDKHandler handler = createSDKHandler();
+        this.resultWriter = new MetricsJsonWriter(outputFile);
+        Thread writerThread = new Thread(resultWriter);
+        writerThread.start();
         
         try {
             // 2. Run warmup
@@ -108,7 +114,19 @@ public class SimpleAnalyticsRunner {
             runPerformanceTest(handler);
             
         } finally {
+            // 4. ✅ FIXED: Proper shutdown sequence
+            LOGGER.info("Shutting down metrics writer...");
+            resultWriter.stop(); // Signal writer to stop and drain
+            try {
+                writerThread.join(5000); // Wait up to 5 seconds for the writer thread to finish
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                LOGGER.error("Interrupted while waiting for writer to finish.", e);
+            }
+            
             handler.close();
+            
+            LOGGER.info("Total results written: {}", resultWriter.getWrittenCount());
         }
     }
     
@@ -169,6 +187,7 @@ public class SimpleAnalyticsRunner {
             executor.submit(() -> {
                 while (System.currentTimeMillis() < warmupEndTime) {
                     try {
+                        // Use a different query name for warmup
                         handler.executeQuery(query, "warmup", sequenceCounter.incrementAndGet());
                     } catch (Exception e) {
                         // Suppress warmup errors
@@ -185,72 +204,64 @@ public class SimpleAnalyticsRunner {
     private void runPerformanceTest(AnalyticsSDKHandler handler) throws Exception {
         LOGGER.info("📊 Starting performance measurement for {}ms", durationMs);
         
+        // ✅ FIXED: Reset sequence counter for the main test run
+        this.sequenceCounter.set(0);
+        
         ExecutorService executor = Executors.newFixedThreadPool(threads);
         AtomicLong requestCount = new AtomicLong(0);
         AtomicLong successCount = new AtomicLong(0);
         
-        // Create metrics writer
-        MetricsJsonWriter resultWriter = new MetricsJsonWriter(outputFile);
-        Thread writerThread = new Thread(resultWriter);
-        writerThread.start();
-        
         long actualStartTime = System.currentTimeMillis();
         long endTime = actualStartTime + durationMs;
         
-        try {
-            // Submit worker threads
-            for (int i = 0; i < threads; i++) {
-                executor.submit(() -> {
-                    long nextExecutionTime = System.currentTimeMillis();
+        for (int i = 0; i < threads; i++) {
+            executor.submit(() -> {
+                long nextExecutionTime = System.currentTimeMillis();
+                
+                while (System.currentTimeMillis() < endTime) {
+                    requestCount.incrementAndGet();
                     
-                    while (System.currentTimeMillis() < endTime) {
+                    QueryExecutionMetrics result = handler.executeQuery(
+                            query, queryName, sequenceCounter.incrementAndGet());
+                    
+                    if (result.isSuccess()) {
+                        successCount.incrementAndGet();
+                    }
+                    
+                    resultWriter.writeResult(result);
+                    
+                    // Coordinated Omission Timing
+                    nextExecutionTime += requestIntervalMs;
+                    long sleepTime = nextExecutionTime - System.currentTimeMillis();
+                    if (sleepTime > 0) {
                         try {
-                            requestCount.incrementAndGet();
-                            
-                            QueryExecutionMetrics result = handler.executeQuery(
-                                query, queryName, sequenceCounter.incrementAndGet()
-                            );
-                            
-                            if (result.isSuccess()) {
-                                successCount.incrementAndGet();
-                            }
-                            
-                            resultWriter.writeResult(result);
-                            
-                            // Fixed coordinated omission timing
-                            nextExecutionTime += requestIntervalMs;
-                            long sleepTime = nextExecutionTime - System.currentTimeMillis();
-                            if (sleepTime > 0) {
-                                Thread.sleep(sleepTime);
-                            }
-                            
-                        } catch (Exception e) {
-                            LOGGER.debug("Worker thread error: {}", e.getMessage());
+                            Thread.sleep(sleepTime);
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
                         }
                     }
-                });
-            }
-            
-            // Monitor progress
-            monitorProgress(actualStartTime, endTime, requestCount, successCount);
-            
-            // Final summary
-            long totalRequests = requestCount.get();
-            long totalSuccesses = successCount.get();
-            double successRate = totalRequests > 0 ? (totalSuccesses * 100.0) / totalRequests : 0;
-            
-            LOGGER.info("✅ {} SDK Test Complete:", handler.getSDKType().toUpperCase());
-            LOGGER.info("   Total Requests: {}", totalRequests);
-            LOGGER.info("   Success Rate: {}%", String.format("%.2f", successRate));
-            LOGGER.info("   Raw data written to: {}", outputFile);
-            
-        } finally {
-            executor.shutdown();
-            executor.awaitTermination(30, TimeUnit.SECONDS);
-            
-            resultWriter.stop();
-            writerThread.join(5000);
+                }
+            });
         }
+
+        // Monitor progress
+        Thread monitor = new Thread(() -> {
+            try {
+                monitorProgress(actualStartTime, endTime, requestCount, successCount);
+            } catch (InterruptedException e) {
+                // This is expected when the main thread interrupts the monitor to stop it.
+                Thread.currentThread().interrupt();
+                LOGGER.debug("Progress monitor was interrupted, shutting down.");
+            }
+        });
+        monitor.setDaemon(true); // So it doesn't block exit
+        monitor.start();
+
+        executor.shutdown();
+        executor.awaitTermination(durationMs + 10000, TimeUnit.MILLISECONDS);
+        
+        // Stop the monitor
+        monitor.interrupt();
     }
     
     private void monitorProgress(long startTime, long endTime, AtomicLong requestCount, AtomicLong successCount) 

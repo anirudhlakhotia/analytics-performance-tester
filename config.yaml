@@ -3,9 +3,9 @@
 
 # Test execution settings
 test:
-  duration_ms: 30000          # 30 seconds per SDK
-  warmup_ms: 30000             # 30 seconds JIT warmup
-  threads: 100                 # Concurrent threads
+  duration_ms: 60000         # 1 minute per SDK
+  warmup_ms: 30000             # 30 seconds warmup
+  threads: 10               # Concurrent threads
   request_interval_ms: 2500    # Time between requests per thread
   
 # Multiple queries to test with

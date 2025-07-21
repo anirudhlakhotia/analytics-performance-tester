@@ -321,7 +321,7 @@ analytics-performance-tester/
 ├── 📊 scripts/
 │   └── run-full-benchmark.sh          # Main orchestrator
 ├── 🔬 analysis/
-│   ├── dashboard-generator.py         # Dashboard creation
+│   ├── dashboard_generator.py         # Dashboard creation
 │   └── requirements.txt               # Python dependencies
 └── 📈 results/                        # Generated results
     ├── runs/                          # Timestamped runs
@@ -369,7 +369,7 @@ java -cp target/java-analytics-benchmark-1.0-SNAPSHOT.jar \
      com.couchbase.analytics.benchmark.SimpleAnalyticsRunner
 
 # Test dashboard generation
-python3 analysis/dashboard-generator.py --run-dir results/latest
+python3 analysis/dashboard_generator.py --run-dir results/latest
 ```
 
 ## 🐛 Troubleshooting
