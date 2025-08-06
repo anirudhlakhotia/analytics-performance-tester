@@ -34,3 +34,5 @@ cbdinocluster
 
 # Results
 results/
+apps/python-analytics-client/__pycache__/
+analysis/__pycache__/

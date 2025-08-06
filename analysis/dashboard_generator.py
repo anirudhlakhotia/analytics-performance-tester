@@ -3,7 +3,7 @@
 Analytics SDK Performance Test Result Analyzer
 
 Generates developer-friendly HTML dashboard from JSONL test results
-Supports single-language comparisons (Java vs Java or Go vs Go)
+Supports single-language comparisons (Java vs Java, Go vs Go, or Python vs Python)
 """
 
 import json
@@ -65,7 +65,8 @@ def auto_detect_result_files(run_dir):
     # Check for language-specific files
     patterns = {
         'java': ['operational-java.jsonl', 'enterprise-java.jsonl'],
-        'go': ['operational-go.jsonl', 'enterprise-go.jsonl']
+        'go': ['operational-go.jsonl', 'enterprise-go.jsonl'],
+        'python': ['operational-python.jsonl', 'enterprise-python.jsonl']
     }
     
     for lang, file_patterns in patterns.items():
@@ -115,407 +116,787 @@ def calculate_detailed_metrics(df, language="unknown"):
     test_duration_s = test_duration_ms / 1000.0
     
     total_requests = len(df)
-    successful_df = df[df['success']]
+    successful_df = df[df['success'] == True]
     success_count = len(successful_df)
     success_rate = (success_count / total_requests) * 100 if total_requests > 0 else 0
     
-    if successful_df.empty:
+    if success_count == 0:
         return {
             'total_requests': total_requests,
-            'success_rate': 0,
-            'avg_latency': 0,
-            'min_latency': 0,
-            'max_latency': 0,
-            'std_latency': 0,
-            'p95_latency': 0,
-            'p99_latency': 0,
-            'throughput': 0,
-            'test_duration_s': test_duration_s,
-            'language': language
+            'successful_requests': success_count,
+            'success_rate': success_rate,
+            'throughput_rps': 0,
+            'error': "No successful requests to analyze"
         }
     
-    # Calculate throughput using actual test duration from timestamps
-    if 'timestamp' in successful_df.columns and len(successful_df) > 1:
-        timestamps = successful_df['timestamp']
-        
-        if hasattr(timestamps.iloc[0], 'timestamp'):
-            start_ms = timestamps.min().timestamp() * 1000
-            end_ms = timestamps.max().timestamp() * 1000
-        else:
-            start_ms = float(timestamps.min())
-            end_ms = float(timestamps.max())
-        
-        actual_duration_s = (end_ms - start_ms) / 1000.0
-        actual_duration_s = max(actual_duration_s, 1.0)
-        
-        throughput = success_count / actual_duration_s
-        final_test_duration_s = actual_duration_s
-    else:
-        throughput = success_count / test_duration_s
-        final_test_duration_s = test_duration_s
+    # Calculate throughput (requests per second)
+    throughput_rps = success_count / test_duration_s
     
-    # Detailed latency metrics
-    latencies = successful_df['duration_ms']
+    # Get timing data for successful requests only
+    durations = successful_df['duration_ms']
     
     return {
         'total_requests': total_requests,
+        'successful_requests': success_count,
         'success_rate': success_rate,
-        'avg_latency': latencies.mean(),
-        'min_latency': latencies.min(),
-        'max_latency': latencies.max(),
-        'std_latency': latencies.std(),
-        'p95_latency': latencies.quantile(0.95),
-        'p99_latency': latencies.quantile(0.99),
-        'throughput': throughput,
-        'test_duration_s': final_test_duration_s,
+        'throughput_rps': throughput_rps,
+        'mean_latency': durations.mean(),
+        'median_latency': durations.median(),
+        'p95_latency': durations.quantile(0.95),
+        'p99_latency': durations.quantile(0.99),
+        'min_latency': durations.min(),
+        'max_latency': durations.max(),
+        'std_latency': durations.std(),
         'language': language
     }
 
-def create_summary_table(operational_metrics, enterprise_metrics, language):
-    """Create summary table for operational vs enterprise comparison."""
-    metrics_data = []
+def create_latency_histogram(operational_df, enterprise_df, language="unknown"):
+    """Create overlapping histogram of latency distributions."""
+    fig = go.Figure()
     
-    for name, metrics in [("Operational SDK", operational_metrics), 
-                         ("Enterprise SDK", enterprise_metrics)]:
-        if not metrics:
-            metrics_data.append([
-                f"<b>{name}</b>", "No data", "No data", "No data", 
-                "No data", "No data", "No data", "No data", "No data"
-            ])
-            continue
+    logger.info(f"create_latency_histogram: operational={len(operational_df)}, enterprise={len(enterprise_df)}")
+    
+    has_data = False
+    
+    # Process operational data
+    if not operational_df.empty:
+        op_successful = operational_df[operational_df['success'] == True]
+        logger.info(f"Operational successful records: {len(op_successful)}")
+        
+        if not op_successful.empty:
+            # Get duration values and convert to plain Python list
+            durations = op_successful['duration_ms'].values.tolist()
+            logger.info(f"Operational durations: {len(durations)} values")
+            logger.info(f"Operational sample: {durations[:5]}")
+            logger.info(f"Operational range: {min(durations):.2f} to {max(durations):.2f}")
             
-        metrics_data.append([
-            f"<b>{name}</b>",
-            f"{metrics['success_rate']:.1f}%",
-            f"{metrics['throughput']:.1f}",
-            f"{metrics['avg_latency']:.1f}",
-            f"{metrics['min_latency']:.1f}",
-            f"{metrics['max_latency']:.1f}",
-            f"{metrics['std_latency']:.1f}",
-            f"{metrics['p95_latency']:.1f}",
-            f"{metrics['p99_latency']:.1f}"
-        ])
+            fig.add_trace(go.Histogram(
+                x=durations,
+                name='Operational SDK',
+                opacity=0.7,
+                marker_color=COLORS['operational'],
+                xbins=dict(size=2.0)  # Fixed bin size of 2ms
+            ))
+            has_data = True
     
-    return go.Table(
-        header=dict(
-            values=[
-                "<b>SDK</b>", 
-                "<b>Success<br>Rate</b>", 
-                "<b>Throughput<br>(req/s)</b>",
-                "<b>Average<br>(ms)</b>", 
-                "<b>Min<br>(ms)</b>", 
-                "<b>Max<br>(ms)</b>", 
-                "<b>Std Dev<br>(ms)</b>",
-                "<b>P95<br>(ms)</b>", 
-                "<b>P99<br>(ms)</b>"
-            ],
-            fill_color='#f1f1f2',
-            align='center',
-            font=dict(size=13, color='black'),
-            height=50
-        ),
-        cells=dict(
-            values=list(zip(*metrics_data)),
-            fill_color=['white', '#f8f9fa'],
-            align='center',
-            font=dict(size=12),
-            height=35
+    # Process enterprise data
+    if not enterprise_df.empty:
+        ent_successful = enterprise_df[enterprise_df['success'] == True]
+        logger.info(f"Enterprise successful records: {len(ent_successful)}")
+        
+        if not ent_successful.empty:
+            # Get duration values and convert to plain Python list
+            durations = ent_successful['duration_ms'].values.tolist()
+            logger.info(f"Enterprise durations: {len(durations)} values")
+            logger.info(f"Enterprise sample: {durations[:5]}")
+            logger.info(f"Enterprise range: {min(durations):.2f} to {max(durations):.2f}")
+            
+            fig.add_trace(go.Histogram(
+                x=durations,
+                name='Enterprise SDK',
+                opacity=0.7,
+                marker_color=COLORS['enterprise'],
+                xbins=dict(size=2.0)  # Fixed bin size of 2ms
+            ))
+            has_data = True
+    
+    if not has_data:
+        logger.warning("No data found for histogram")
+        fig.update_layout(
+            title=f'Query Latency Distribution ({language.title()})',
+            xaxis_title='Latency (ms)',
+            yaxis_title='Count',
+            template='plotly_white',
+            annotations=[{
+                'text': 'No data available',
+                'x': 0.5, 'y': 0.5,
+                'xref': 'paper', 'yref': 'paper',
+                'showarrow': False,
+                'font': {'size': 16, 'color': 'gray'}
+            }]
         )
-    )
+    else:
+        fig.update_layout(
+            title=f'Query Latency Distribution ({language.title()})',
+            xaxis_title='Latency (ms)',
+            yaxis_title='Count',
+            barmode='overlay',
+            template='plotly_white',
+            height=500
+        )
+    
+    logger.info(f"Histogram created with {len(fig.data)} traces")
+    return fig
 
-def create_sdk_comparison_dashboard(data_files, language, operational_metrics, enterprise_metrics, 
-                                  run_timestamp=None, output_path=None):
-    """Creates a dashboard comparing operational vs enterprise SDKs for a single language."""
-    logger.info(f"Generating {language.upper()} SDK comparison dashboard...")
+def create_latency_timeseries(operational_df, enterprise_df, language="unknown"):
+    """Create time series plot of query latencies over actual elapsed time."""
+    fig = go.Figure()
     
-    dashboard_file = Path(output_path) if output_path else DASHBOARD_FILE
-    dashboard_file.parent.mkdir(parents=True, exist_ok=True)
-    
-    # Create layout matching the user's request: Summary table, Key Latency Metrics, Throughput Comparison, Performance Over Time
-    fig = make_subplots(
-        rows=3, cols=2,
-        subplot_titles=[
-            "📊 Detailed Performance Metrics", "",
-            "⚡ Key Latency Metrics", "🚀 Throughput Comparison",
-            "📈 Performance Over Time", ""
-        ],
-        specs=[
-            [{"type": "table", "colspan": 2}, None],  # Summary table spans both columns
-            [{"type": "xy"}, {"type": "xy"}],         # Latency metrics | Throughput comparison
-            [{"type": "xy", "colspan": 2}, None]      # Performance over time spans both columns
-        ],
-        vertical_spacing=0.12,  # More space between rows
-        horizontal_spacing=0.1,
-        row_heights=[0.25, 0.35, 0.4]  # Allocate more space to the performance over time chart
-    )
-    
-    # Add summary table
-    fig.add_trace(create_summary_table(operational_metrics, enterprise_metrics, language), 
-                  row=1, col=1)
-    
-    # Load dataframes
-    operational_df = pd.DataFrame()
-    enterprise_df = pd.DataFrame()
-    
-    if 'operational' in data_files:
-        operational_df = load_data(data_files['operational']['path'])
-    if 'enterprise' in data_files:
-        enterprise_df = load_data(data_files['enterprise']['path'])
-    
-    # Key Latency Metrics (grouped bar chart)
-    latency_categories = ['Average', 'P95', 'P99']
-    operational_latencies = []
-    enterprise_latencies = []
-    
-    if operational_metrics:
-        operational_latencies = [
-            operational_metrics['avg_latency'],
-            operational_metrics['p95_latency'], 
-            operational_metrics['p99_latency']
-        ]
-    
-    if enterprise_metrics:
-        enterprise_latencies = [
-            enterprise_metrics['avg_latency'],
-            enterprise_metrics['p95_latency'],
-            enterprise_metrics['p99_latency']
-        ]
-    
-    if operational_latencies:
-        fig.add_trace(go.Bar(
-            x=latency_categories,
-            y=operational_latencies,
-            name='Operational SDK',
-            marker_color=COLORS['operational'],
-            text=[f'{val:.1f}ms' for val in operational_latencies],
-            textposition='outside'
-        ), row=2, col=1)
-    
-    if enterprise_latencies:
-        fig.add_trace(go.Bar(
-            x=latency_categories,
-            y=enterprise_latencies,
-            name='Enterprise SDK',
-            marker_color=COLORS['enterprise'],
-            text=[f'{val:.1f}ms' for val in enterprise_latencies],
-            textposition='outside'
-        ), row=2, col=1)
-    
-    # Throughput Comparison
-    if operational_metrics and enterprise_metrics:
-        fig.add_trace(go.Bar(
-            x=['Operational SDK', 'Enterprise SDK'],
-            y=[operational_metrics['throughput'], enterprise_metrics['throughput']],
-            marker_color=[COLORS['operational'], COLORS['enterprise']],
-            text=[f"{operational_metrics['throughput']:.1f}", f"{enterprise_metrics['throughput']:.1f}"],
-            textposition='outside',
-            showlegend=False
-        ), row=2, col=2)
-    elif operational_metrics:
-        fig.add_trace(go.Bar(
-            x=['Operational SDK'],
-            y=[operational_metrics['throughput']],
-            marker_color=[COLORS['operational']],
-            text=[f"{operational_metrics['throughput']:.1f}"],
-            textposition='outside',
-            showlegend=False
-        ), row=2, col=2)
-    elif enterprise_metrics:
-        fig.add_trace(go.Bar(
-            x=['Enterprise SDK'],
-            y=[enterprise_metrics['throughput']],
-            marker_color=[COLORS['enterprise']],
-            text=[f"{enterprise_metrics['throughput']:.1f}"],
-            textposition='outside',
-            showlegend=False
-        ), row=2, col=2)
-    
-    # Performance Over Time (line chart with proper timestamp overlap)
-    # Find the earliest start time to create relative timestamps
-    all_start_times = []
+    # Debug logging
+    logger.info(f"create_latency_timeseries: operational={len(operational_df)}, enterprise={len(enterprise_df)}")
+
+    # Get successful data with explicit boolean check
+    op_successful = pd.DataFrame()
+    ent_successful = pd.DataFrame()
     
     if not operational_df.empty:
-        op_successful = operational_df[operational_df['success']]
-        if not op_successful.empty and 'start_time' in op_successful.columns:
-            all_start_times.extend(op_successful['start_time'].tolist())
+        op_successful = operational_df[operational_df['success'] == True].copy()
+        logger.info(f"Operational successful records: {len(op_successful)}")
     
     if not enterprise_df.empty:
-        ent_successful = enterprise_df[enterprise_df['success']]
-        if not ent_successful.empty and 'start_time' in ent_successful.columns:
-            all_start_times.extend(ent_successful['start_time'].tolist())
+        ent_successful = enterprise_df[enterprise_df['success'] == True].copy()
+        logger.info(f"Enterprise successful records: {len(ent_successful)}")
+
+    # Check if we have any data to plot
+    if op_successful.empty and ent_successful.empty:
+        logger.warning("No successful data found for latency time series")
+        fig.update_layout(
+            title=f'Query Latency Over Time ({language.title()})',
+            xaxis_title='Elapsed Time (seconds)',
+            yaxis_title='Latency (ms)',
+            template='plotly_white',
+            annotations=[{
+                'text': 'No successful requests found',
+                'x': 0.5, 'y': 0.5,
+                'xref': 'paper', 'yref': 'paper',
+                'showarrow': False,
+                'font': {'size': 16, 'color': 'gray'}
+            }]
+        )
+        return fig
+
+    # Find global start time for consistent X-axis
+    all_times = []
+    if not op_successful.empty:
+        all_times.extend(op_successful['absolute_start_time_ms'].astype(float).tolist())
+    if not ent_successful.empty:
+        all_times.extend(ent_successful['absolute_start_time_ms'].astype(float).tolist())
     
-    if all_start_times:
-        # Convert nanoseconds to seconds relative to test start
-        earliest_start = min(all_start_times)
+    global_start_time = min(all_times)
+    logger.info(f"Global start time: {global_start_time}, total time points: {len(all_times)}")
+
+    # Plot operational data
+    if not op_successful.empty:
+        # Calculate elapsed seconds from global start
+        elapsed_seconds = (op_successful['absolute_start_time_ms'].astype(float) - global_start_time) / 1000.0
+        duration_ms = op_successful['duration_ms'].astype(float)
         
-        # Plot operational SDK
-        if not operational_df.empty:
-            op_successful = operational_df[operational_df['success']]
-            if not op_successful.empty and len(op_successful) > 1:
-                # Convert nanosecond timestamps to relative seconds
-                relative_times = (op_successful['start_time'] - earliest_start) / 1_000_000_000
-                
-                # Sample data for cleaner visualization (every 10th point)
-                if len(op_successful) > 500:
-                    step = len(op_successful) // 500
-                    op_sampled = op_successful.iloc[::step]
-                    sampled_times = relative_times.iloc[::step]
-                else:
-                    op_sampled = op_successful
-                    sampled_times = relative_times
-                
-                fig.add_trace(go.Scatter(
-                    x=sampled_times,
-                    y=op_sampled['duration_ms'],
-                    mode='lines+markers',
-                    name='Operational SDK',
-                    line=dict(color=COLORS['operational'], width=2),
-                    marker=dict(size=3),
-                    opacity=0.7
-                ), row=3, col=1)
+        logger.info(f"Operational: {len(elapsed_seconds)} points, time range: {elapsed_seconds.min():.1f}-{elapsed_seconds.max():.1f}s")
         
-        # Plot enterprise SDK
-        if not enterprise_df.empty:
-            ent_successful = enterprise_df[enterprise_df['success']]
-            if not ent_successful.empty and len(ent_successful) > 1:
-                # Convert nanosecond timestamps to relative seconds
-                relative_times = (ent_successful['start_time'] - earliest_start) / 1_000_000_000
-                
-                # Sample data for cleaner visualization (every 10th point)
-                if len(ent_successful) > 500:
-                    step = len(ent_successful) // 500
-                    ent_sampled = ent_successful.iloc[::step]
-                    sampled_times = relative_times.iloc[::step]
-                else:
-                    ent_sampled = ent_successful
-                    sampled_times = relative_times
-                
-                fig.add_trace(go.Scatter(
-                    x=sampled_times,
-                    y=ent_sampled['duration_ms'],
-                    mode='lines+markers',
-                    name='Enterprise SDK',
-                    line=dict(color=COLORS['enterprise'], width=2),
-                    marker=dict(size=3),
-                    opacity=0.7
-                ), row=3, col=1)
-    
-    # Update layout with increased height
-    title_parts = ["Analytics SDK Performance Comparison"]
-    if run_timestamp:
-        title_parts.append(f"<span style='font-size:16px; color:#666;'>Run: {run_timestamp}</span>")
-    title_parts.append(f"<span style='font-size:14px; color:#888;'>Comprehensive Performance Analysis</span>")
+        fig.add_trace(go.Scatter(
+            x=elapsed_seconds,
+            y=duration_ms,
+            mode='markers',
+            name='Operational SDK',
+            marker=dict(color=COLORS['operational'], size=4, opacity=0.6),
+            hovertemplate='<b>Operational SDK</b><br>Time: %{x:.1f}s<br>Latency: %{y:.2f}ms<br>Seq: ' + 
+                         op_successful['sequence_number'].astype(str) + '<extra></extra>'
+        ))
+
+    # Plot enterprise data  
+    if not ent_successful.empty:
+        # Calculate elapsed seconds from global start
+        elapsed_seconds = (ent_successful['absolute_start_time_ms'].astype(float) - global_start_time) / 1000.0
+        duration_ms = ent_successful['duration_ms'].astype(float)
+        
+        logger.info(f"Enterprise: {len(elapsed_seconds)} points, time range: {elapsed_seconds.min():.1f}-{elapsed_seconds.max():.1f}s")
+        
+        fig.add_trace(go.Scatter(
+            x=elapsed_seconds,
+            y=duration_ms,
+            mode='markers',
+            name='Enterprise SDK',
+            marker=dict(color=COLORS['enterprise'], size=4, opacity=0.6),
+            hovertemplate='<b>Enterprise SDK</b><br>Time: %{x:.1f}s<br>Latency: %{y:.2f}ms<br>Seq: ' + 
+                         ent_successful['sequence_number'].astype(str) + '<extra></extra>'
+        ))
     
     fig.update_layout(
-        height=1400,  # Increased height for better readability
-        title={
-            'text': "<br>".join(title_parts),
-            'x': 0.5,
-            'xanchor': 'center',
-            'font': {'size': 24, 'color': '#2c3e50'}
-        },
-        showlegend=True,
-        legend=dict(
-            x=1.02,
-            y=0.5,
-            bgcolor='rgba(255,255,255,0.8)',
-            bordercolor='rgba(0,0,0,0.2)',
-            borderwidth=1
-        ),
+        title=f'Query Latency Over Time ({language.title()})',
+        xaxis_title='Elapsed Time (seconds)',
+        yaxis_title='Latency (ms)',
         template='plotly_white',
-        margin=dict(l=50, r=150, t=120, b=50)
+        showlegend=True,
+        height=500
     )
     
-    # Update axis labels
-    fig.update_xaxes(title_text="Latency Metrics", row=2, col=1)
-    fig.update_yaxes(title_text="Latency (ms)", row=2, col=1)
-    
-    fig.update_xaxes(title_text="SDK", row=2, col=2)
-    fig.update_yaxes(title_text="Throughput (req/s)", row=2, col=2)
-    
-    fig.update_xaxes(title_text="Time (seconds)", row=3, col=1)
-    fig.update_yaxes(title_text="Latency (ms)", row=3, col=1)
-    
-    # Save dashboard
-    fig.write_html(dashboard_file, 
-                   include_plotlyjs=True, 
-                   config={'displayModeBar': False})
-    
-    logger.info(f"{language.upper()} SDK dashboard saved to: {dashboard_file}")
-    return operational_metrics, enterprise_metrics
+    return fig
 
-def print_sdk_comparison_summary(operational_metrics, enterprise_metrics, language):
-    """Print a detailed comparison summary for operational vs enterprise SDKs."""
-    print("=" * 80)
-    print(f"🚀 {language.upper()} ANALYTICS SDK PERFORMANCE COMPARISON")
-    print("=" * 80)
+def create_latency_by_sequence(operational_df, enterprise_df, language="unknown"):
+    """Create alternative plot showing latency by sequence number."""
+    fig = go.Figure()
     
-    if not operational_metrics and not enterprise_metrics:
-        print("❌ No metrics data available")
-        return
+    logger.info(f"create_latency_by_sequence: operational={len(operational_df)}, enterprise={len(enterprise_df)}")
+
+    # Get successful data
+    if not operational_df.empty:
+        op_successful = operational_df[operational_df['success'] == True].copy()
+        if not op_successful.empty:
+            # Sort by sequence number to ensure proper order
+            op_successful = op_successful.sort_values('sequence_number')
+            
+            fig.add_trace(go.Scatter(
+                x=op_successful['sequence_number'],
+                y=op_successful['duration_ms'].astype(float),
+                mode='markers',
+                name='Operational SDK',
+                marker=dict(color=COLORS['operational'], size=4, opacity=0.6),
+                hovertemplate='<b>Operational SDK</b><br>Query #%{x}<br>Latency: %{y:.2f}ms<extra></extra>'
+            ))
+
+    if not enterprise_df.empty:
+        ent_successful = enterprise_df[enterprise_df['success'] == True].copy()
+        if not ent_successful.empty:
+            # Sort by sequence number to ensure proper order
+            ent_successful = ent_successful.sort_values('sequence_number')
+            
+            fig.add_trace(go.Scatter(
+                x=ent_successful['sequence_number'],
+                y=ent_successful['duration_ms'].astype(float),
+                mode='markers',
+                name='Enterprise SDK',
+                marker=dict(color=COLORS['enterprise'], size=4, opacity=0.6),
+                hovertemplate='<b>Enterprise SDK</b><br>Query #%{x}<br>Latency: %{y:.2f}ms<extra></extra>'
+            ))
     
-    # Print detailed table
-    print("📊 DETAILED COMPARISON:")
-    print(f"{'SDK Type':20} {'Success Rate':>12} {'Throughput':>12} {'Avg Latency':>12} {'P95 Latency':>12}")
-    print("-" * 70)
+    fig.update_layout(
+        title=f'Query Latency by Sequence ({language.title()})',
+        xaxis_title='Query Sequence Number',
+        yaxis_title='Latency (ms)',
+        template='plotly_white',
+        showlegend=True,
+        height=500
+    )
+    
+    return fig
+
+def create_throughput_timeseries(operational_df, enterprise_df, language="unknown", window_size_seconds=5):
+    """Create time series plot of throughput over time using sliding window."""
+    fig = go.Figure()
+    
+    logger.info(f"create_throughput_timeseries: operational={len(operational_df)}, enterprise={len(enterprise_df)}")
+
+    # Get successful data
+    datasets = {}
+    global_times = []
+    
+    if not operational_df.empty:
+        op_successful = operational_df[operational_df['success'] == True].copy()
+        if not op_successful.empty:
+            datasets['Operational SDK'] = op_successful
+            global_times.extend(op_successful['absolute_start_time_ms'].astype(float).tolist())
+    
+    if not enterprise_df.empty:
+        ent_successful = enterprise_df[enterprise_df['success'] == True].copy()
+        if not ent_successful.empty:
+            datasets['Enterprise SDK'] = ent_successful
+            global_times.extend(ent_successful['absolute_start_time_ms'].astype(float).tolist())
+    
+    if not global_times:
+        logger.warning("No data for throughput calculation")
+        fig.update_layout(
+            title=f'Throughput Over Time ({language.title()}) - {window_size_seconds}s Windows',
+            xaxis_title='Elapsed Time (seconds)',
+            yaxis_title='Throughput (RPS)',
+            template='plotly_white',
+            annotations=[{
+                'text': 'No data available',
+                'x': 0.5, 'y': 0.5,
+                'xref': 'paper', 'yref': 'paper',
+                'showarrow': False,
+                'font': {'size': 16, 'color': 'gray'}
+            }]
+        )
+        return fig
+
+    # Find global time range
+    global_start = min(global_times)
+    global_end = max(global_times)
+    total_duration = (global_end - global_start) / 1000.0
+    
+    logger.info(f"Throughput calculation: {total_duration:.1f}s duration, {len(datasets)} datasets")
+
+    # Create time windows
+    num_windows = max(1, int(total_duration / window_size_seconds))
+    time_windows = np.linspace(0, total_duration, num_windows + 1)
+    
+    for sdk_name, df in datasets.items():
+        if df.empty:
+            continue
+            
+        # Calculate elapsed time for this dataset
+        elapsed_times = (df['absolute_start_time_ms'].astype(float) - global_start) / 1000.0
+        
+        # Calculate throughput for each window
+        window_centers = []
+        throughputs = []
+        
+        for i in range(len(time_windows) - 1):
+            window_start = time_windows[i]
+            window_end = time_windows[i + 1]
+            window_center = (window_start + window_end) / 2
+            
+            # Count requests in this window
+            requests_in_window = ((elapsed_times >= window_start) & (elapsed_times < window_end)).sum()
+            throughput = requests_in_window / window_size_seconds
+            
+            window_centers.append(window_center)
+            throughputs.append(throughput)
+        
+        if window_centers:
+            color = COLORS['operational'] if sdk_name == 'Operational SDK' else COLORS['enterprise']
+            
+            logger.info(f"{sdk_name}: {len(window_centers)} windows, max throughput: {max(throughputs):.2f} RPS")
+                
+            fig.add_trace(go.Scatter(
+                x=window_centers,
+                y=throughputs,
+                    mode='lines+markers',
+                name=sdk_name,
+                line=dict(color=color, width=2),
+                marker=dict(color=color, size=6),
+                hovertemplate=f'<b>{sdk_name}</b><br>Time: %{{x:.1f}}s<br>Throughput: %{{y:.2f}} RPS<extra></extra>'
+            ))
+    
+    fig.update_layout(
+        title=f'Throughput Over Time ({language.title()}) - {window_size_seconds}s Windows',
+        xaxis_title='Elapsed Time (seconds)',
+        yaxis_title='Throughput (RPS)',
+        template='plotly_white',
+        showlegend=True,
+        height=500
+    )
+    
+    return fig
+
+def create_percentile_comparison(operational_metrics, enterprise_metrics, language="unknown"):
+    """Create bar chart comparing latency percentiles."""
+    percentiles = ['min_latency', 'median_latency', 'p95_latency', 'p99_latency', 'max_latency']
+    percentile_labels = ['Min', 'Median', 'P95', 'P99', 'Max']
+    
+    operational_values = [operational_metrics.get(p, 0) if operational_metrics else 0 for p in percentiles]
+    enterprise_values = [enterprise_metrics.get(p, 0) if enterprise_metrics else 0 for p in percentiles]
+    
+    fig = go.Figure(data=[
+        go.Bar(name='Operational SDK', x=percentile_labels, y=operational_values, marker_color=COLORS['operational']),
+        go.Bar(name='Enterprise SDK', x=percentile_labels, y=enterprise_values, marker_color=COLORS['enterprise'])
+    ])
+    
+    fig.update_layout(
+        title=f'Latency Percentiles Comparison ({language.title()})',
+        xaxis_title='Percentile',
+        yaxis_title='Latency (ms)',
+        barmode='group',
+        template='plotly_white'
+    )
+    
+    return fig
+
+def create_throughput_comparison(operational_metrics, enterprise_metrics, language="unknown"):
+    """Create bar chart comparing throughput."""
+    sdks = []
+    throughputs = []
+    colors = []
     
     if operational_metrics:
-        print(f"{'Operational':20} {operational_metrics['success_rate']:>10.1f}% {operational_metrics['throughput']:>10.1f} rps {operational_metrics['avg_latency']:>10.1f}ms {operational_metrics['p95_latency']:>10.1f}ms")
+        sdks.append('Operational SDK')
+        throughputs.append(operational_metrics.get('throughput_rps', 0))
+        colors.append(COLORS['operational'])
     
     if enterprise_metrics:
-        print(f"{'Enterprise':20} {enterprise_metrics['success_rate']:>10.1f}% {enterprise_metrics['throughput']:>10.1f} rps {enterprise_metrics['avg_latency']:>10.1f}ms {enterprise_metrics['p95_latency']:>10.1f}ms")
+        sdks.append('Enterprise SDK')
+        throughputs.append(enterprise_metrics.get('throughput_rps', 0))
+        colors.append(COLORS['enterprise'])
     
-    # SDK comparison
-    if operational_metrics and enterprise_metrics:
-        print("\n🏆 SDK COMPARISON:")
-        
-        # Latency comparison
-        if enterprise_metrics['avg_latency'] < operational_metrics['avg_latency']:
-            diff = operational_metrics['avg_latency'] - enterprise_metrics['avg_latency']
-            print(f"⚡ Lower Average Latency: Enterprise SDK ({diff:.1f}ms faster)")
-        elif operational_metrics['avg_latency'] < enterprise_metrics['avg_latency']:
-            diff = enterprise_metrics['avg_latency'] - operational_metrics['avg_latency']
-            print(f"⚡ Lower Average Latency: Operational SDK ({diff:.1f}ms faster)")
-        else:
-            print(f"⚡ Average Latency: Both SDKs perform similarly")
-        
-        # Throughput comparison
-        if enterprise_metrics['throughput'] > operational_metrics['throughput']:
-            diff = enterprise_metrics['throughput'] - operational_metrics['throughput']
-            print(f"🚀 Higher Throughput: Enterprise SDK (+{diff:.1f} rps)")
-        elif operational_metrics['throughput'] > enterprise_metrics['throughput']:
-            diff = operational_metrics['throughput'] - enterprise_metrics['throughput']
-            print(f"🚀 Higher Throughput: Operational SDK (+{diff:.1f} rps)")
-        else:
-            print(f"🚀 Throughput: Both SDKs perform similarly")
-        
-        # P95 comparison
-        if enterprise_metrics['p95_latency'] < operational_metrics['p95_latency']:
-            diff = operational_metrics['p95_latency'] - enterprise_metrics['p95_latency']
-            print(f"📊 Better P95 Latency: Enterprise SDK ({diff:.1f}ms better)")
-        elif operational_metrics['p95_latency'] < enterprise_metrics['p95_latency']:
-            diff = enterprise_metrics['p95_latency'] - operational_metrics['p95_latency']
-            print(f"📊 Better P95 Latency: Operational SDK ({diff:.1f}ms better)")
+    fig = go.Figure(data=[
+        go.Bar(x=sdks, y=throughputs, marker_color=colors)
+    ])
     
-    print("\n📋 Full dashboard with detailed charts has been generated")
-    print("=" * 80)
+    fig.update_layout(
+        title=f'Throughput Comparison ({language.title()})',
+        xaxis_title='SDK',
+        yaxis_title='Requests per Second (RPS)',
+        template='plotly_white'
+    )
+    
+    return fig
+
+def create_success_rate_comparison(operational_metrics, enterprise_metrics, language="unknown"):
+    """Create bar chart comparing success rates."""
+    sdks = []
+    success_rates = []
+    colors = []
+    
+    if operational_metrics:
+        sdks.append('Operational SDK')
+        success_rates.append(operational_metrics.get('success_rate', 0))
+        colors.append(COLORS['operational'])
+    
+    if enterprise_metrics:
+        sdks.append('Enterprise SDK')  
+        success_rates.append(enterprise_metrics.get('success_rate', 0))
+        colors.append(COLORS['enterprise'])
+    
+    fig = go.Figure(data=[
+        go.Bar(x=sdks, y=success_rates, marker_color=colors)
+    ])
+    
+    fig.update_layout(
+        title=f'Success Rate Comparison ({language.title()})',
+        xaxis_title='SDK',
+        yaxis_title='Success Rate (%)',
+        template='plotly_white',
+        yaxis=dict(range=[0, 105])  # Set range to 0-105% for better visualization
+    )
+    
+    return fig
+
+def create_metrics_table(operational_metrics, enterprise_metrics, language="unknown"):
+    """Create HTML table with detailed metrics."""
+    
+    def format_metric(value, unit="", decimals=2):
+        """Format a metric value with appropriate precision."""
+        if value is None:
+            return "N/A"
+        if isinstance(value, (int, float)):
+            if decimals == 0:
+                return f"{int(value)}{unit}"
+            else:
+                return f"{value:.{decimals}f}{unit}"
+        return str(value)
+    
+    # Define metrics to display
+    metrics = [
+        ('Total Requests', 'total_requests', '', 0),
+        ('Successful Requests', 'successful_requests', '', 0),
+        ('Success Rate', 'success_rate', '%', 2),
+        ('Throughput', 'throughput_rps', ' RPS', 2),
+        ('Mean Latency', 'mean_latency', ' ms', 2),
+        ('Median Latency', 'median_latency', ' ms', 2),
+        ('P95 Latency', 'p95_latency', ' ms', 2),
+        ('P99 Latency', 'p99_latency', ' ms', 2),
+        ('Min Latency', 'min_latency', ' ms', 2),
+        ('Max Latency', 'max_latency', ' ms', 2),
+        ('Std Dev Latency', 'std_latency', ' ms', 2)
+    ]
+    
+    # Build HTML table
+    table_html = f"""
+    <div class="table-container">
+        <h3>Performance Metrics Summary ({language.title()})</h3>
+        <table class="metrics-table">
+            <thead>
+                <tr>
+                    <th>Metric</th>
+                    <th>Operational SDK</th>
+                    <th>Enterprise SDK</th>
+                </tr>
+            </thead>
+            <tbody>
+    """
+    
+    for metric_name, metric_key, unit, decimals in metrics:
+        op_value = format_metric(operational_metrics.get(metric_key) if operational_metrics else None, unit, decimals)
+        ent_value = format_metric(enterprise_metrics.get(metric_key) if enterprise_metrics else None, unit, decimals)
+        
+        table_html += f"""
+                <tr>
+                    <td>{metric_name}</td>
+                    <td>{op_value}</td>
+                    <td>{ent_value}</td>
+                </tr>
+        """
+    
+    table_html += """
+            </tbody>
+        </table>
+    </div>
+    """
+    
+    return table_html
+
+def create_latency_progression(operational_df, enterprise_df, language="unknown"):
+    """Create scatter plot showing latency progression by query sequence."""
+    fig = go.Figure()
+    
+    logger.info(f"create_latency_progression: operational={len(operational_df)}, enterprise={len(enterprise_df)}")
+    
+    has_data = False
+    
+    # Process operational data
+    if not operational_df.empty:
+        op_successful = operational_df[operational_df['success'] == True].copy()
+        logger.info(f"Operational successful records: {len(op_successful)}")
+        
+        if not op_successful.empty:
+            # Sort by sequence number to ensure proper order
+            op_successful = op_successful.sort_values('sequence_number')
+            
+            sequence_nums = op_successful['sequence_number'].values.tolist()
+            durations = op_successful['duration_ms'].values.tolist()
+            
+            logger.info(f"Operational: {len(sequence_nums)} points, sequence range: {min(sequence_nums)}-{max(sequence_nums)}")
+            logger.info(f"Operational latency range: {min(durations):.2f}-{max(durations):.2f}ms")
+            
+            fig.add_trace(go.Scatter(
+                x=sequence_nums,
+                y=durations,
+                mode='markers+lines',
+                name='Operational SDK',
+                marker=dict(color=COLORS['operational'], size=6, opacity=0.7),
+                line=dict(color=COLORS['operational'], width=1, dash='dot'),
+                hovertemplate='<b>Operational SDK</b><br>Query #%{x}<br>Latency: %{y:.2f}ms<extra></extra>'
+            ))
+            has_data = True
+    
+    # Process enterprise data
+    if not enterprise_df.empty:
+        ent_successful = enterprise_df[enterprise_df['success'] == True].copy()
+        logger.info(f"Enterprise successful records: {len(ent_successful)}")
+        
+        if not ent_successful.empty:
+            # Sort by sequence number to ensure proper order
+            ent_successful = ent_successful.sort_values('sequence_number')
+            
+            sequence_nums = ent_successful['sequence_number'].values.tolist()
+            durations = ent_successful['duration_ms'].values.tolist()
+            
+            logger.info(f"Enterprise: {len(sequence_nums)} points, sequence range: {min(sequence_nums)}-{max(sequence_nums)}")
+            logger.info(f"Enterprise latency range: {min(durations):.2f}-{max(durations):.2f}ms")
+            
+            fig.add_trace(go.Scatter(
+                x=sequence_nums,
+                y=durations,
+                mode='markers+lines',
+                name='Enterprise SDK',
+                marker=dict(color=COLORS['enterprise'], size=6, opacity=0.7),
+                line=dict(color=COLORS['enterprise'], width=1, dash='dot'),
+                hovertemplate='<b>Enterprise SDK</b><br>Query #%{x}<br>Latency: %{y:.2f}ms<extra></extra>'
+            ))
+            has_data = True
+    
+    if not has_data:
+        logger.warning("No data found for latency progression")
+        fig.update_layout(
+            title=f'Query Latency Progression ({language.title()})',
+            xaxis_title='Query Sequence Number',
+            yaxis_title='Latency (ms)',
+            template='plotly_white',
+            annotations=[{
+                'text': 'No data available',
+                'x': 0.5, 'y': 0.5,
+                'xref': 'paper', 'yref': 'paper',
+                'showarrow': False,
+                'font': {'size': 16, 'color': 'gray'}
+            }]
+        )
+    else:
+        fig.update_layout(
+            title=f'Query Latency Progression ({language.title()})',
+            xaxis_title='Query Sequence Number',
+            yaxis_title='Latency (ms)',
+            template='plotly_white',
+            showlegend=True,
+            height=600,
+            xaxis=dict(
+                showgrid=True,
+                gridwidth=1,
+                gridcolor='rgba(128,128,128,0.2)'
+            ),
+            yaxis=dict(
+                showgrid=True,
+                gridwidth=1,
+                gridcolor='rgba(128,128,128,0.2)'
+            )
+        )
+    
+    logger.info(f"Latency progression plot created with {len(fig.data)} traces")
+    return fig
+
+def generate_html_dashboard(operational_metrics, enterprise_metrics, language="unknown", operational_df=None, enterprise_df=None):
+    """Generate complete HTML dashboard."""
+    
+    # Handle None DataFrames
+    if operational_df is None:
+        operational_df = pd.DataFrame()
+    if enterprise_df is None:
+        enterprise_df = pd.DataFrame()
+    
+    # Create all visualizations
+    latency_progression = create_latency_progression(operational_df, enterprise_df, language)
+    percentile_comparison = create_percentile_comparison(operational_metrics, enterprise_metrics, language)
+    throughput_comparison = create_throughput_comparison(operational_metrics, enterprise_metrics, language)
+    success_rate_comparison = create_success_rate_comparison(operational_metrics, enterprise_metrics, language)
+    metrics_table = create_metrics_table(operational_metrics, enterprise_metrics, language)
+    
+    # Convert plots to HTML
+    latency_progression_html = pyo.plot(latency_progression, output_type='div', include_plotlyjs=False)
+    percentile_comparison_html = pyo.plot(percentile_comparison, output_type='div', include_plotlyjs=False)
+    throughput_comparison_html = pyo.plot(throughput_comparison, output_type='div', include_plotlyjs=False)
+    success_rate_comparison_html = pyo.plot(success_rate_comparison, output_type='div', include_plotlyjs=False)
+    
+    # Generate timestamp
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    # Build complete HTML page with new professional styling
+    html_content = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Analytics SDK Performance Dashboard ({language.title()})</title>
+        <script src="https://cdn.plot.ly/plotly-latest.min.js"></script>
+        <style>
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+            
+            body {{
+                font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+                margin: 0;
+                padding: 20px;
+                background-color: #f8f9fa; /* Light grey background */
+                color: #212529; /* Dark grey text for contrast */
+            }}
+            .container {{
+                max-width: 1600px;
+                margin: 0 auto;
+                background-color: #ffffff;
+                border-radius: 12px;
+                box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+                padding: 40px;
+                border: 1px solid #dee2e6;
+            }}
+            .header {{
+                text-align: center;
+                margin-bottom: 40px;
+                padding-bottom: 20px;
+                border-bottom: 1px solid #e9ecef;
+            }}
+            .header h1 {{
+                font-size: 2.25rem;
+                font-weight: 700;
+                color: #343a40;
+                margin: 0;
+            }}
+            .header h2 {{
+                font-size: 1.5rem;
+                font-weight: 500;
+                color: #495057;
+                margin: 10px 0;
+            }}
+            .timestamp {{
+                color: #6c757d;
+                font-size: 0.9rem;
+                font-weight: 400;
+            }}
+            .grid-container {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(400px, 1fr));
+                gap: 30px;
+                margin: 30px 0;
+            }}
+            .chart-container, .table-container {{
+                background-color: #ffffff;
+                padding: 25px;
+                border-radius: 10px;
+                border: 1px solid #e9ecef;
+                box-shadow: 0 2px 8px rgba(0,0,0,0.03);
+                transition: transform 0.2s, box-shadow 0.2s;
+            }}
+            .chart-container:hover, .table-container:hover {{
+                transform: translateY(-5px);
+                box-shadow: 0 6px 24px rgba(0,0,0,0.07);
+            }}
+            .full-width {{
+                grid-column: 1 / -1;
+            }}
+            .metrics-table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin-top: 20px;
+            }}
+            .metrics-table th, .metrics-table td {{
+                padding: 14px 18px;
+                text-align: left;
+                border-bottom: 1px solid #dee2e6;
+                font-size: 0.95rem;
+            }}
+            .metrics-table th {{
+                background-color: #f8f9fa;
+                font-weight: 600;
+                color: #495057;
+                text-transform: uppercase;
+                letter-spacing: 0.5px;
+                border-top: 1px solid #dee2e6;
+            }}
+            .metrics-table tr:last-child td {{
+                border-bottom: none;
+            }}
+            .metrics-table tr:hover {{
+                background-color: #f1f3f5;
+            }}
+            .metrics-table td:first-child {{
+                font-weight: 500;
+                color: #343a40;
+            }}
+            .section-title {{
+                font-size: 1.75rem;
+                font-weight: 600;
+                color: #343a40;
+                margin-top: 40px;
+                margin-bottom: 20px;
+                padding-bottom: 10px;
+                border-bottom: 2px solid #3498db;
+                display: inline-block;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>Analytics Performance Dashboard</h1>
+                <h2>{language.title()} SDK Comparison</h2>
+                <p class="timestamp">Generated on {timestamp}</p>
+            </div>
+
+            <div class="section-title">Performance Summary</div>
+            <div class="table-container full-width">
+                {metrics_table}
+            </div>
+
+            <div class="section-title">Performance Visualizations</div>
+            <div class="grid-container">
+                <div class="chart-container">
+                    {throughput_comparison_html}
+                </div>
+                <div class="chart-container">
+                    {success_rate_comparison_html}
+                </div>
+                <div class="chart-container full-width">
+                    {percentile_comparison_html}
+                </div>
+                <div class="chart-container full-width">
+                    {latency_progression_html}
+                </div>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return html_content
 
 def main():
-    """Main function to generate the performance dashboard."""
-    parser = argparse.ArgumentParser(description='Generate Analytics SDK Performance Dashboard')
-    parser.add_argument('--output', '-o', help='Output HTML file path')
-    parser.add_argument('--run-timestamp', help='Run timestamp for this analysis')
-    parser.add_argument('--run-dir', help='Run directory (auto-detects files)')
-    
+    parser = argparse.ArgumentParser(description='Generate Analytics Performance Dashboard')
+    parser.add_argument('--run-dir', type=str, help='Path to specific run directory')
+    parser.add_argument('--output', type=str, help='Output HTML file path')
     args = parser.parse_args()
     
-    # Auto-detect file paths if run-dir is provided
+    # Auto-detect result files
     if args.run_dir:
-        run_path = Path(args.run_dir)
-        data_files, language = auto_detect_result_files(run_path)
-        args.output = args.output or str(run_path / "reports" / "dashboard.html")
+        data_files, language = auto_detect_result_files(args.run_dir)
+        args.output = args.output or str(Path(args.run_dir) / "reports" / "dashboard.html")
     else:
-        # Use latest results
         latest_dir = Path(__file__).parent.parent / "results" / "latest"
         if latest_dir.exists():
             data_files, language = auto_detect_result_files(latest_dir)
@@ -528,6 +909,7 @@ def main():
         print("Expected files in raw/ directory:")
         print("  For Go: operational-go.jsonl, enterprise-go.jsonl")
         print("  For Java: operational-java.jsonl, enterprise-java.jsonl")
+        print("  For Python: operational-python.jsonl, enterprise-python.jsonl")
         print("  Legacy: operational.jsonl, enterprise.jsonl")
         sys.exit(1)
     
@@ -538,31 +920,45 @@ def main():
     # Calculate metrics for available datasets
     operational_metrics = None
     enterprise_metrics = None
+    operational_df = pd.DataFrame()
+    enterprise_df = pd.DataFrame()
     
     if 'operational' in data_files:
-        df = load_data(data_files['operational']['path'])
-        if not df.empty:
-            operational_metrics = calculate_detailed_metrics(df, language)
-            logger.info(f"Loaded {len(df)} results for Operational SDK")
+        operational_df = load_data(data_files['operational']['path'])
+        if not operational_df.empty:
+            operational_metrics = calculate_detailed_metrics(operational_df, language)
+            logger.info(f"Operational SDK: {len(operational_df)} records loaded")
+        else:
+            logger.warning("Operational SDK: No data found")
     
     if 'enterprise' in data_files:
-        df = load_data(data_files['enterprise']['path'])
-        if not df.empty:
-            enterprise_metrics = calculate_detailed_metrics(df, language)
-            logger.info(f"Loaded {len(df)} results for Enterprise SDK")
+        enterprise_df = load_data(data_files['enterprise']['path'])
+        if not enterprise_df.empty:
+            enterprise_metrics = calculate_detailed_metrics(enterprise_df, language)
+            logger.info(f"Enterprise SDK: {len(enterprise_df)} records loaded")
+        else:
+            logger.warning("Enterprise SDK: No data found")
     
     if not operational_metrics and not enterprise_metrics:
-        logger.error("No valid data found in any file")
+        logger.error("No valid data found in either SDK result file")
         sys.exit(1)
     
-    # Generate dashboard
-    create_sdk_comparison_dashboard(data_files, language, operational_metrics, enterprise_metrics, 
-                                   args.run_timestamp, args.output)
+    # Generate HTML dashboard
+    html_content = generate_html_dashboard(
+        operational_metrics, enterprise_metrics, language,
+        operational_df, enterprise_df
+    )
     
-    # Print summary
-    print_sdk_comparison_summary(operational_metrics, enterprise_metrics, language)
+    # Ensure output directory exists
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     
-    logger.info(f"Dashboard generated successfully: {args.output}")
+    # Write dashboard
+    with open(output_path, 'w') as f:
+        f.write(html_content)
+    
+    logger.info(f"Dashboard generated: {output_path}")
+    logger.info(f"Dashboard URL: file://{output_path.absolute()}")
 
 if __name__ == "__main__":
     main()

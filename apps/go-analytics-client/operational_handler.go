@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/couchbase/gocb/v2"
@@ -15,6 +16,19 @@ type OperationalSDKHandler struct {
 
 // NewOperationalSDKHandler creates a new operational SDK handler
 func NewOperationalSDKHandler(config Configuration) (*OperationalSDKHandler, error) {
+	// Add the escape-hatch so the operational SDK can talk to Enterprise-Analytics
+	connStr := config.ConnectionString
+	if !strings.Contains(connStr, "allow_enterprise_analytics=") {
+		if strings.Contains(connStr, "?") {
+			connStr += "&allow_enterprise_analytics=true"
+		} else {
+			connStr += "?allow_enterprise_analytics=true"
+		}
+	}
+	log.Printf("########################################################")
+	log.Printf("Using connection string: %s", connStr)
+	log.Printf("########################################################")
+
 	// Create cluster options
 	opts := gocb.ClusterOptions{
 		Username: config.Username,
@@ -25,8 +39,8 @@ func NewOperationalSDKHandler(config Configuration) (*OperationalSDKHandler, err
 		},
 	}
 	
-	// Connect to cluster
-	cluster, err := gocb.Connect(config.ConnectionString, opts)
+	// Connect to cluster using the modified connection string
+	cluster, err := gocb.Connect(connStr, opts)
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to cluster: %w", err)
 	}
@@ -39,7 +53,10 @@ func NewOperationalSDKHandler(config Configuration) (*OperationalSDKHandler, err
 	}
 	
 	log.Println("✅ Operational SDK connected successfully")
-	
+
+	// Sleep for 15 seconds
+	time.Sleep(15 * time.Second)
+
 	return &OperationalSDKHandler{
 		cluster: cluster,
 	}, nil
