@@ -116,7 +116,7 @@ def calculate_detailed_metrics(df, language="unknown"):
     test_duration_s = test_duration_ms / 1000.0
     
     total_requests = len(df)
-    successful_df = df[df['success'] == True]
+    successful_df = df[df['success']]
     success_count = len(successful_df)
     success_rate = (success_count / total_requests) * 100 if total_requests > 0 else 0
     
@@ -160,7 +160,7 @@ def create_latency_histogram(operational_df, enterprise_df, language="unknown"):
     
     # Process operational data
     if not operational_df.empty:
-        op_successful = operational_df[operational_df['success'] == True]
+        op_successful = operational_df[operational_df['success']]
         logger.info(f"Operational successful records: {len(op_successful)}")
         
         if not op_successful.empty:
@@ -181,7 +181,7 @@ def create_latency_histogram(operational_df, enterprise_df, language="unknown"):
     
     # Process enterprise data
     if not enterprise_df.empty:
-        ent_successful = enterprise_df[enterprise_df['success'] == True]
+        ent_successful = enterprise_df[enterprise_df['success']]
         logger.info(f"Enterprise successful records: {len(ent_successful)}")
         
         if not ent_successful.empty:
@@ -240,11 +240,11 @@ def create_latency_timeseries(operational_df, enterprise_df, language="unknown")
     ent_successful = pd.DataFrame()
     
     if not operational_df.empty:
-        op_successful = operational_df[operational_df['success'] == True].copy()
+        op_successful = operational_df[operational_df['success']].copy()
         logger.info(f"Operational successful records: {len(op_successful)}")
     
     if not enterprise_df.empty:
-        ent_successful = enterprise_df[enterprise_df['success'] == True].copy()
+        ent_successful = enterprise_df[enterprise_df['success']].copy()
         logger.info(f"Enterprise successful records: {len(ent_successful)}")
 
     # Check if we have any data to plot
@@ -330,7 +330,7 @@ def create_latency_by_sequence(operational_df, enterprise_df, language="unknown"
 
     # Get successful data
     if not operational_df.empty:
-        op_successful = operational_df[operational_df['success'] == True].copy()
+        op_successful = operational_df[operational_df['success']].copy()
         if not op_successful.empty:
             # Sort by sequence number to ensure proper order
             op_successful = op_successful.sort_values('sequence_number')
@@ -345,7 +345,7 @@ def create_latency_by_sequence(operational_df, enterprise_df, language="unknown"
             ))
 
     if not enterprise_df.empty:
-        ent_successful = enterprise_df[enterprise_df['success'] == True].copy()
+        ent_successful = enterprise_df[enterprise_df['success']].copy()
         if not ent_successful.empty:
             # Sort by sequence number to ensure proper order
             ent_successful = ent_successful.sort_values('sequence_number')
@@ -381,13 +381,13 @@ def create_throughput_timeseries(operational_df, enterprise_df, language="unknow
     global_times = []
     
     if not operational_df.empty:
-        op_successful = operational_df[operational_df['success'] == True].copy()
+        op_successful = operational_df[operational_df['success']].copy()
         if not op_successful.empty:
             datasets['Operational SDK'] = op_successful
             global_times.extend(op_successful['absolute_start_time_ms'].astype(float).tolist())
     
     if not enterprise_df.empty:
-        ent_successful = enterprise_df[enterprise_df['success'] == True].copy()
+        ent_successful = enterprise_df[enterprise_df['success']].copy()
         if not ent_successful.empty:
             datasets['Enterprise SDK'] = ent_successful
             global_times.extend(ent_successful['absolute_start_time_ms'].astype(float).tolist())
@@ -625,7 +625,7 @@ def create_latency_progression(operational_df, enterprise_df, language="unknown"
     
     # Process operational data
     if not operational_df.empty:
-        op_successful = operational_df[operational_df['success'] == True].copy()
+        op_successful = operational_df[operational_df['success']].copy()
         logger.info(f"Operational successful records: {len(op_successful)}")
         
         if not op_successful.empty:
@@ -651,7 +651,7 @@ def create_latency_progression(operational_df, enterprise_df, language="unknown"
     
     # Process enterprise data
     if not enterprise_df.empty:
-        ent_successful = enterprise_df[enterprise_df['success'] == True].copy()
+        ent_successful = enterprise_df[enterprise_df['success']].copy()
         logger.info(f"Enterprise successful records: {len(ent_successful)}")
         
         if not ent_successful.empty:
