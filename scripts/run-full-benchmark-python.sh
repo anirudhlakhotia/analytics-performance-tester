@@ -185,7 +185,12 @@ setup_python_env() {
     
     # Install analytics SDK from source
     log_info "Installing analytics SDK from source..."
-    cd "/Users/anirudh.lakhotia/Documents/analytics-python-client"
+    ANALYTICS_SDK_PATH="${ANALYTICS_SDK_PATH:-$PROJECT_ROOT/analytics-python-client}"
+    if [ ! -d "$ANALYTICS_SDK_PATH" ]; then
+        log_error "Analytics SDK path '$ANALYTICS_SDK_PATH' does not exist. Please set the ANALYTICS_SDK_PATH environment variable or check your project structure."
+        exit 1
+    fi
+    cd "$ANALYTICS_SDK_PATH"
     pip install -e .
     
     # Go back to app directory
