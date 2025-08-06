@@ -294,7 +294,9 @@ main() {
     
     # Generate dashboard
     log_step "Generating analysis dashboard..."
-    python3 "$PROJECT_ROOT/analysis/dashboard_generator.py" --run-dir "$RUN_DIR"
+    if ! python3 "$PROJECT_ROOT/analysis/dashboard_generator.py" --run-dir "$RUN_DIR"; then
+        log_error "Dashboard generation failed. See above for details. Continuing with summary output."
+    fi
     
     # Create latest symlink
     if [ -L "$RESULTS_DIR/latest" ]; then
