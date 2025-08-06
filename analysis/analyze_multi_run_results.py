@@ -74,41 +74,51 @@ def print_summary(op_df: pd.DataFrame, ent_df: pd.DataFrame, num_runs: int):
         return
 
     metrics_to_report = {
-        'throughput': {'name': 'Throughput (req/s)', 'unit': 'req/s'},
-        'avg_latency': {'name': 'Avg Latency (ms)', 'unit': 'ms'},
-        'p95_latency': {'name': 'P95 Latency (ms)', 'unit': 'ms'},
-        'p99_latency': {'name': 'P99 Latency (ms)', 'unit': 'ms'},
-        'std_latency': {'name': 'Std Dev Latency (ms)', 'unit': 'ms'}
+        'throughput_rps': 'Throughput (req/s)',
+        'mean_latency': 'Avg Latency (ms)',
+        'p95_latency': 'P95 Latency (ms)',
+        'p99_latency': 'P99 Latency (ms)',
+        'std_latency': 'Std Dev Latency (ms)'
     }
 
-    summary_data = []
-
-    for key, info in metrics_to_report.items():
-        if not op_df.empty and key in op_df.columns:
-            op_mean = op_df[key].mean()
-            op_std = op_df[key].std()
-            summary_data.append(['Operational', info['name'], f"{op_mean:.2f}", f"{op_std:.2f}"])
+    summary_rows = []
+    for key, name in metrics_to_report.items():
+        row = {'Metric': name}
         
-        if not ent_df.empty and key in ent_df.columns:
-            ent_mean = ent_df[key].mean()
-            ent_std = ent_df[key].std()
-            summary_data.append(['Enterprise', info['name'], f"{ent_mean:.2f}", f"{ent_std:.2f}"])
+        # Operational SDK
+        if not op_df.empty:
+            if key in op_df.columns:
+                mean = op_df[key].mean()
+                std = op_df[key].std()
+                row['Operational SDK'] = f"{mean:.2f} (± {std:.2f})"
+            else:
+                row['Operational SDK'] = "N/A"
+        
+        # Enterprise SDK
+        if not ent_df.empty:
+            if key in ent_df.columns:
+                mean = ent_df[key].mean()
+                std = ent_df[key].std()
+                row['Enterprise SDK'] = f"{mean:.2f} (± {std:.2f})"
+            else:
+                row['Enterprise SDK'] = "N/A"
+                
+        summary_rows.append(row)
 
-    # Create a DataFrame for prettier printing
-    summary_df = pd.DataFrame(summary_data, columns=['SDK', 'Metric', 'Mean', 'Std Dev'])
+    columns = ['Metric']
+    if not op_df.empty:
+        columns.append('Operational SDK')
+    if not ent_df.empty:
+        columns.append('Enterprise SDK')
     
-    header = f"📊 Aggregated Performance Results ({num_runs} Runs) 📊"
-    print("\n" + "=" * len(header))
-    print(header)
-    print("=" * len(header))
+    summary_df = pd.DataFrame(summary_rows, columns=columns)
     
-    # Use pandas to_string() for nice formatting
+    print(f"\nPerformance Summary ({num_runs} Runs)")
+    
     if not summary_df.empty:
         print(summary_df.to_string(index=False))
     
-    print("=" * len(header))
-    print(f"Mean and Standard Deviation calculated across {num_runs} full test executions.")
-    print("=" * len(header) + "\n")
+    print(f"\nValues are shown as Mean (± Standard Deviation) across the {num_runs} runs.")
 
 
 def main():
